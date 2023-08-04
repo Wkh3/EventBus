@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-//BusSubscriber defines subscription-related bus behavior
+// BusSubscriber defines subscription-related bus behavior
 type BusSubscriber interface {
 	Subscribe(topic string, fn interface{}) error
 	SubscribeAsync(topic string, fn interface{}, transactional bool) error
@@ -15,18 +15,19 @@ type BusSubscriber interface {
 	Unsubscribe(topic string, handler interface{}) error
 }
 
-//BusPublisher defines publishing-related bus behavior
+// BusPublisher defines publishing-related bus behavior
 type BusPublisher interface {
 	Publish(topic string, args ...interface{})
+	PublishSync(topic string, args ...interface{}) []interface{}
 }
 
-//BusController defines bus control behavior (checking handler's presence, synchronization)
+// BusController defines bus control behavior (checking handler's presence, synchronization)
 type BusController interface {
 	HasCallback(topic string) bool
 	WaitAsync()
 }
 
-//Bus englobes global (subscribe, publish, control) bus behavior
+// Bus englobes global (subscribe, publish, control) bus behavior
 type Bus interface {
 	BusController
 	BusSubscriber
@@ -127,6 +128,28 @@ func (bus *EventBus) Unsubscribe(topic string, handler interface{}) error {
 	return fmt.Errorf("topic %s doesn't exist", topic)
 }
 
+func (bus *EventBus) PublishSync(topic string, args ...interface{}) []interface{} {
+	bus.lock.Lock() // will unlock if handler is not found or always after setUpPublish
+	defer bus.lock.Unlock()
+	if handlers, ok := bus.handlers[topic]; ok && 0 < len(handlers) {
+		// Handlers slice may be changed by removeHandler and Unsubscribe during iteration,
+		// so make a copy and iterate the copied slice.
+		copyHandlers := make([]*eventHandler, len(handlers))
+		copy(copyHandlers, handlers)
+		for i, handler := range copyHandlers {
+			if handler.flagOnce {
+				bus.removeHandler(topic, i)
+			}
+
+			if !handler.async {
+				return bus.doPublish(handler, topic, args...)
+			}
+		}
+	}
+
+	return nil
+}
+
 // Publish executes callback defined for a topic. Any additional argument will be transferred to the callback.
 func (bus *EventBus) Publish(topic string, args ...interface{}) {
 	bus.lock.Lock() // will unlock if handler is not found or always after setUpPublish
@@ -155,9 +178,15 @@ func (bus *EventBus) Publish(topic string, args ...interface{}) {
 	}
 }
 
-func (bus *EventBus) doPublish(handler *eventHandler, topic string, args ...interface{}) {
+func (bus *EventBus) doPublish(handler *eventHandler, topic string, args ...interface{}) []interface{} {
 	passedArguments := bus.setUpPublish(handler, args...)
-	handler.callBack.Call(passedArguments)
+	values := handler.callBack.Call(passedArguments)
+	res := make([]interface{}, 0, len(values))
+	for _, v := range values {
+		res = append(res, v.Interface())
+	}
+
+	return res
 }
 
 func (bus *EventBus) doPublishAsync(handler *eventHandler, topic string, args ...interface{}) {

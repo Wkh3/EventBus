@@ -135,6 +135,27 @@ func TestSubcribeOnceAsync(t *testing.T) {
 	}
 }
 
+func TestPublishSync(t *testing.T) {
+	bus := New()
+	bus.Subscribe("add", func(a, b int) int {
+		return a + b
+	})
+
+	result := bus.PublishSync("add", 1, 2)
+
+	v := result[0].(int)
+	if v != 3 {
+		t.Fail()
+	}
+
+	result = bus.PublishSync("add", 10, 5)
+
+	v = result[0].(int)
+	if v != 15 {
+		t.Fail()
+	}
+}
+
 func TestSubscribeAsyncTransactional(t *testing.T) {
 	results := make([]int, 0)
 
